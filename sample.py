@@ -2,6 +2,7 @@
 Sample from a trained model
 """
 from collections import abc
+from collections import abc
 import os
 import pickle
 from contextlib import nullcontext
@@ -20,11 +21,13 @@ start = "\n" # or "<|endoftext|>" or etc. Can also specify a file, use as: "FILE
 num_samples = 10 # number of samples to draw
 max_new_tokens = 500 # number of tokens generated in each sample
 batch_size = 1
+batch_size = 1
 temperature = 0.8 # 1.0 = no change, < 1.0 = less random, > 1.0 = more random, in predictions
 top_k = 200 # retain only the top_k most likely tokens, clamp others to have 0 probability
 seed = 1337
 device = 'cuda' # examples: 'cpu', 'cuda', 'cuda:0', 'cuda:1', etc.
 dtype = 'bfloat16' if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else 'float16' # 'float32' or 'bfloat16' or 'float16'
+compile = True # use PyTorch 2.0 to compile the model to be faster
 compile = True # use PyTorch 2.0 to compile the model to be faster
 exec(open('configurator.py').read()) # overrides from command line or config file
 # -----------------------------------------------------------------------------
@@ -89,10 +92,13 @@ if start.startswith('FILE:'):
 start_ids = encode(start)
 start_tensor = (torch.tensor(start_ids, dtype=torch.long, device=device))
 x = start_tensor[None, ...].repeat(batch_size, 1)
+start_tensor = (torch.tensor(start_ids, dtype=torch.long, device=device))
+x = start_tensor[None, ...].repeat(batch_size, 1)
 
 # run generation
 with torch.no_grad():
     with ctx:
+        start_time = time.time()
         for k in range(num_samples):
             start_time = time.time()
             y = model.generate(x, max_new_tokens, temperature=temperature, top_k=top_k)
