@@ -92,8 +92,9 @@ class PrunableLinear(nn.Linear):
             # when we called train
             self.weight.data *= self.mask
             flat_weights = self.weight.abs().flatten()
-            sample_weights = torch.randint(0, flat_weights.numel(), (10000,))
-            sample = flat_weights[sample_weights]
+            non_zero_indices = torch.nonzero(flat_weights)
+            sample_weight_indices = non_zero_indices[torch.randint(0, non_zero_indices.numel(), (10000,))]
+            sample = flat_weights[sample_weight_indices]
             threshold = torch.quantile(sample, p)
             print(f"Threshold is {threshold}")
 
