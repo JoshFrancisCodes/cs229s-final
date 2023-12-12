@@ -82,10 +82,15 @@ class CausalSelfAttention(nn.Module):
 class PrunableLinear(nn.Linear):
     def __init__(self, *args, **kwargs):
         super(PrunableLinear, self).__init__(*args, **kwargs)
+        # Initalize prune mask to all 1s, will be updated as we call prune_weights
+        self.mask = torch.ones(self.weight.shape, device='cuda')
 
     def prune_weights(self, p):
         with torch.no_grad():
             # Flatten the weights and compute the threshold for pruning
+            # Mask all values that we've set to 0 in the past; They may have been updated
+            # when we called train
+            self.weight.data *= self.mask
             flat_weights = self.weight.abs().flatten()
             sample_weights = torch.randint(0, flat_weights.numel(), (10000,))
             sample = flat_weights[sample_weights]
@@ -94,6 +99,7 @@ class PrunableLinear(nn.Linear):
 
             # Create the mask and apply it to the weights
             weight_mask = torch.abs(self.weight) > threshold
+            self.mask *= weight_mask
             self.weight.data *= weight_mask
 
             print(f"Pruned {flat_weights.numel() - torch.count_nonzero(weight_mask.flatten())}")
