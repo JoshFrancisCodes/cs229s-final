@@ -203,6 +203,19 @@ class GPT(nn.Module):
             n_params -= self.transformer.wpe.weight.numel()
         return n_params
     
+    def get_num_non_pruned_params(self):
+        """
+        Return the number of non-pruned parameters in the model by summing up the mask values.
+        Only works for models with PrunableLinear layers that have a 'mask' attribute.
+        """
+        n_non_pruned_params = 0
+        for module in self.modules():
+            if isinstance(module, PrunableLinear):
+                n_non_pruned_params += module.mask.sum().item()
+        
+        return n_non_pruned_params
+
+    
     def prune(self, p):
         self.lm_head.prune_weights(p)
         for block in self.transformer.h:
