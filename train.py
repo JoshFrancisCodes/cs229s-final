@@ -24,8 +24,8 @@ from contextlib import nullcontext
 
 import numpy as np
 import torch
-import torch._dynamo
-import torch._dynamo
+#import torch._dynamo
+#import torch._dynamo
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.distributed import init_process_group, destroy_process_group
 
@@ -206,8 +206,8 @@ checkpoint = None # free up memory
 # compile the model
 if compile:
     print("compiling the model... (takes a ~minute)")
-    torch._dynamo.config.suppress_errors = True
-    torch._dynamo.config.suppress_errors = True
+    #torch._dynamo.config.suppress_errors = True
+    #torch._dynamo.config.suppress_errors = True
     unoptimized_model = model
     model = torch.compile(model) # requires PyTorch 2.0
 
@@ -318,6 +318,7 @@ while True:
     # step the optimizer and scaler if training in fp16
     scaler.step(optimizer)
     scaler.update()
+    model.prune(0.2)
     # flush the gradients as soon as we can, no need for this memory anymore
     optimizer.zero_grad(set_to_none=True)
 

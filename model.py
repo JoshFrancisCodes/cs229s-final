@@ -32,9 +32,9 @@ class CausalSelfAttention(nn.Module):
         super().__init__()
         assert config.n_embd % config.n_head == 0
         # key, query, value projections for all heads, but in a batch
-        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
+        self.c_attn = PrunableLinear(config.n_embd, 3 * config.n_embd, bias=config.bias)
         # output projection
-        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+        self.c_proj = PrunableLinear(config.n_embd, config.n_embd, bias=config.bias)
         # regularization
         self.attn_dropout = nn.Dropout(config.dropout)
         self.resid_dropout = nn.Dropout(config.dropout)
@@ -75,6 +75,10 @@ class CausalSelfAttention(nn.Module):
         y = self.resid_dropout(self.c_proj(y))
         return y
     
+    def prune(self, p):
+        self.c_attn.prune_weights(p)
+        self.c_proj.prune_weights(p)
+    
 class PrunableLinear(nn.Linear):
     def __init__(self, *args, **kwargs):
         super(PrunableLinear, self).__init__(*args, **kwargs)
@@ -83,7 +87,9 @@ class PrunableLinear(nn.Linear):
         with torch.no_grad():
             # Flatten the weights and compute the threshold for pruning
             flat_weights = self.weight.abs().flatten()
-            threshold = torch.quantile(flat_weights, p / 100.0)
+            sample_weights = torch.randint(0, flat_weights.numel(), (10000,))
+            sample = flat_weights[sample_weights]
+            threshold = torch.quantile(sample, p)
 
             # Create the mask and apply it to the weights
             weight_mask = torch.abs(self.weight) > threshold
@@ -112,9 +118,9 @@ class MLP(nn.Module):
         x = self.dropout(x)
         return x
     
-    def prune(self, threshold):
-        self.c_fc.prune_weights(threshold)
-        self.c_proj.prune_weights(threshold)
+    def prune(self, p):
+        self.c_fc.prune_weights(p)
+        self.c_proj.prune_weights(p)
 
 class Block(nn.Module):
 
@@ -129,6 +135,10 @@ class Block(nn.Module):
         x = x + self.attn(self.ln_1(x))
         x = x + self.mlp(self.ln_2(x))
         return x
+    
+    def prune(self, p):
+        self.attn.prune(p)
+        self.mlp.prune(p)
 
 @dataclass
 class GPTConfig:
@@ -183,6 +193,12 @@ class GPT(nn.Module):
         if non_embedding:
             n_params -= self.transformer.wpe.weight.numel()
         return n_params
+    
+    def prune(self, p):
+        self.lm_head.prune_weights(p)
+        for block in self.transformer.h:
+            block.prune(p)
+        print("number of parameters: %.2fM" % (self.get_num_params()/1e6,))
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
