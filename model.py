@@ -111,6 +111,34 @@ class PrunableLinear(nn.Linear):
             #     bias_threshold = torch.quantile(flat_biases, p / 100.0)
             #     bias_mask = torch.abs(self.bias) > bias_threshold
             #     self.bias.data *= bias_mask
+            
+class PrunableLinear2(nn.Linear):
+    def __init__(self, *args, **kwargs):
+        super(PrunableLinear2, self).__init__(*args, **kwargs)
+        # Initialize prune mask to all 1s (no pruning)
+        self.mask = torch.ones(self.weight.shape[0], device='cuda')  # Mask for rows
+
+    def prune_dimensions(self, p):
+        with torch.no_grad():
+            # Calculate the L2 norm of each row
+            norms = torch.norm(self.weight, p=2, dim=1)
+
+            # Determine the number of rows to prune
+            num_rows_to_prune = int(p * self.weight.shape[0])
+
+            # Find the rows with the smallest norms
+            _, indices_to_prune = torch.topk(norms, num_rows_to_prune, largest=False)
+
+            # Update the mask
+            self.mask[indices_to_prune] = 0
+
+            # Apply the mask to the weights
+            self.weight.data = self.weight.data * self.mask[:, None]
+
+    def forward(self, input):
+        # Apply mask to weights during forward pass
+        pruned_weight = self.weight * self.mask[:, None]
+        return nn.functional.linear(input, pruned_weight, self.bias)
 
 class MLP(nn.Module):
 
