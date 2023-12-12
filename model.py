@@ -79,9 +79,9 @@ class CausalSelfAttention(nn.Module):
         self.c_attn.prune_weights(p)
         self.c_proj.prune_weights(p)
     
-class PrunableLinear(nn.Linear):
+class PrunableLinear2(nn.Linear):
     def __init__(self, *args, **kwargs):
-        super(PrunableLinear, self).__init__(*args, **kwargs)
+        super(PrunableLinear2, self).__init__(*args, **kwargs)
         # Initalize prune mask to all 1s, will be updated as we call prune_weights
         self.mask = torch.ones(self.weight.shape, device='cuda')
 
@@ -112,9 +112,9 @@ class PrunableLinear(nn.Linear):
             #     bias_mask = torch.abs(self.bias) > bias_threshold
             #     self.bias.data *= bias_mask
             
-class PrunableLinear2(nn.Linear):
+class PrunableLinear(nn.Linear):
     def __init__(self, *args, **kwargs):
-        super(PrunableLinear2, self).__init__(*args, **kwargs)
+        super(PrunableLinear, self).__init__(*args, **kwargs)
         # Initialize prune mask to all 1s (no pruning)
         self.mask = torch.ones(self.weight.shape[0], device='cuda')  # Mask for rows
 
