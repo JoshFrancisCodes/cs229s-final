@@ -90,11 +90,14 @@ class PrunableLinear(nn.Linear):
             sample_weights = torch.randint(0, flat_weights.numel(), (10000,))
             sample = flat_weights[sample_weights]
             threshold = torch.quantile(sample, p)
+            print(f"Threshold is {threshold}")
 
             # Create the mask and apply it to the weights
             weight_mask = torch.abs(self.weight) > threshold
             self.weight.data *= weight_mask
 
+            print(f"Pruned {flat_weights.numel() - torch.count_nonzero(weight_mask.flatten())}")
+            print(f"Weights are {self.weight}\n Weight data is {self.weight.data}")
             # Optionally, apply the same pruning to the bias
             # if self.bias is not None:
             #     flat_biases = self.bias.abs().flatten()
