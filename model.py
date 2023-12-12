@@ -221,7 +221,7 @@ class GPT(nn.Module):
         self.lm_head.prune_weights(p)
         for block in self.transformer.h:
             block.prune(p)
-        print("number of parameters: %.2fM" % (self.get_num_params()/1e6,))
+        print("number of parameters: %.2fM" % (self.get_num_non_pruned_params()/1e6,))
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
