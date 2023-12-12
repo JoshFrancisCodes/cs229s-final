@@ -74,14 +74,35 @@ class CausalSelfAttention(nn.Module):
         # output projection
         y = self.resid_dropout(self.c_proj(y))
         return y
+    
+class PrunableLinear(nn.Linear):
+    def __init__(self, *args, **kwargs):
+        super(PrunableLinear, self).__init__(*args, **kwargs)
+
+    def prune_weights(self, p):
+        with torch.no_grad():
+            # Flatten the weights and compute the threshold for pruning
+            flat_weights = self.weight.abs().flatten()
+            threshold = torch.quantile(flat_weights, p / 100.0)
+
+            # Create the mask and apply it to the weights
+            weight_mask = torch.abs(self.weight) > threshold
+            self.weight.data *= weight_mask
+
+            # Optionally, apply the same pruning to the bias
+            # if self.bias is not None:
+            #     flat_biases = self.bias.abs().flatten()
+            #     bias_threshold = torch.quantile(flat_biases, p / 100.0)
+            #     bias_mask = torch.abs(self.bias) > bias_threshold
+            #     self.bias.data *= bias_mask
 
 class MLP(nn.Module):
 
     def __init__(self, config):
         super().__init__()
-        self.c_fc    = nn.Linear(config.n_embd, 4 * config.n_embd, bias=config.bias)
+        self.c_fc    = PrunableLinear(config.n_embd, 4 * config.n_embd, bias=config.bias)
         self.gelu    = nn.GELU()
-        self.c_proj  = nn.Linear(4 * config.n_embd, config.n_embd, bias=config.bias)
+        self.c_proj  = PrunableLinear(4 * config.n_embd, config.n_embd, bias=config.bias)
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
@@ -90,6 +111,10 @@ class MLP(nn.Module):
         x = self.c_proj(x)
         x = self.dropout(x)
         return x
+    
+    def prune(self, threshold):
+        self.c_fc.prune_weights(threshold)
+        self.c_proj.prune_weights(threshold)
 
 class Block(nn.Module):
 
@@ -124,13 +149,13 @@ class GPT(nn.Module):
         self.config = config
 
         self.transformer = nn.ModuleDict(dict(
-            wte = nn.Embedding(config.vocab_size, config.n_embd),
+            wte = nn.Embedding(config.vocab_size, config.n_embd), # vocab_size / block_size are how many tokens in embedding, n_embd is the embedding dimension (768 dimensions per token)
             wpe = nn.Embedding(config.block_size, config.n_embd),
             drop = nn.Dropout(config.dropout),
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
             ln_f = LayerNorm(config.n_embd, bias=config.bias),
         ))
-        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        self.lm_head = PrunableLinear(config.n_embd, config.vocab_size, bias=False)
         # with weight tying when using torch.compile() some warnings get generated:
         # "UserWarning: functional_call was passed multiple values for tied weights.
         # This behavior is deprecated and will be an error in future versions"
@@ -169,7 +194,7 @@ class GPT(nn.Module):
 
     def forward(self, idx, targets=None):
         device = idx.device
-        b, t = idx.size()
+        b, t = idx.size() # idx is b (batch size) sequences of length t (tokens)
         assert t <= self.config.block_size, f"Cannot forward sequence of length {t}, block size is only {self.config.block_size}"
         pos = torch.arange(0, t, dtype=torch.long, device=device) # shape (t)
 
