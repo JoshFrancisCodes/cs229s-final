@@ -32,9 +32,9 @@ class CausalSelfAttention(nn.Module):
         super().__init__()
         assert config.n_embd % config.n_head == 0
         # key, query, value projections for all heads, but in a batch
-        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
+        self.c_attn = PrunableLinear(config.n_embd, 3 * config.n_embd, bias=config.bias)
         # output projection
-        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+        self.c_proj = PrunableLinear(config.n_embd, config.n_embd, bias=config.bias)
         # regularization
         self.attn_dropout = nn.Dropout(config.dropout)
         self.resid_dropout = nn.Dropout(config.dropout)
@@ -81,9 +81,9 @@ class CausalSelfAttention(nn.Module):
         self.c_proj.prune_weights(p)
         self.n_embd = int(self.n_embd * (1 - p))
 
-class PrunableLinear(nn.Linear):
+class PrunableLinear2(nn.Linear):
     def __init__(self, *args, **kwargs):
-        super(PrunableLinear, self).__init__(*args, **kwargs)
+        super(PrunableLinear2, self).__init__(*args, **kwargs)
 
     def prune_weights(self, p):
         with torch.no_grad():
@@ -129,9 +129,9 @@ class PrunableLinear(nn.Linear):
             print(indices_to_keep.shape)
             self.weight = nn.Parameter(torch.index_select(self.weight, 1, indices_to_keep))
     
-class PrunableLinear2(nn.Linear):
+class PrunableLinear(nn.Linear):
     def __init__(self, *args, **kwargs):
-        super(PrunableLinear2, self).__init__(*args, **kwargs)
+        super(PrunableLinear, self).__init__(*args, **kwargs)
         # Initalize prune mask to all 1s, will be updated as we call prune_weights
         self.mask = torch.ones(self.weight.shape, device='cuda')
 
@@ -146,15 +146,15 @@ class PrunableLinear2(nn.Linear):
             sample_weight_indices = non_zero_indices[torch.randint(0, non_zero_indices.numel(), (10000,))]
             sample = flat_weights[sample_weight_indices]
             threshold = torch.quantile(sample, p)
-            print(f"Threshold is {threshold}")
+            # print(f"Threshold is {threshold}")
 
             # Create the mask and apply it to the weights
             weight_mask = torch.abs(self.weight) > threshold
             self.mask *= weight_mask
             self.weight.data *= weight_mask
 
-            print(f"Pruned {flat_weights.numel() - torch.count_nonzero(weight_mask.flatten())}")
-            print(f"Weights are {self.weight}\n Weight data is {self.weight.data}")
+            # print(f"Pruned {flat_weights.numel() - torch.count_nonzero(weight_mask.flatten())}")
+            # print(f"Weights are {self.weight}\n Weight data is {self.weight.data}")
             # Optionally, apply the same pruning to the bias
             # if self.bias is not None:
             #     flat_biases = self.bias.abs().flatten()
@@ -208,9 +208,9 @@ class MLP(nn.Module):
         return x
     
     def prune(self, p):
-        removed_row_indices = self.c_fc.prune_weights(p)
-        #self.c_proj.prune_weights(p)
-        self.c_proj.prune_columns(removed_row_indices)
+        # removed_row_indices = self.c_fc.prune_weights(p)
+        self.c_proj.prune_weights(p)
+        # self.c_proj.prune_columns(removed_row_indices)
 
 class Block(nn.Module):
 
@@ -255,7 +255,7 @@ class GPT(nn.Module):
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
             ln_f = LayerNorm(config.n_embd, bias=config.bias),
         ))
-        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        self.lm_head = PrunableLinear(config.n_embd, config.vocab_size, bias=False)
         # with weight tying when using torch.compile() some warnings get generated:
         # "UserWarning: functional_call was passed multiple values for tied weights.
         # This behavior is deprecated and will be an error in future versions"
@@ -298,11 +298,12 @@ class GPT(nn.Module):
 
     
     def prune(self, p):
-        #self.lm_head.prune_weights(p)
+        self.lm_head.prune_weights(p)
         for block in self.transformer.h:
             block.prune(p)
+        print("number of parameters: %.2fM" % (self.get_num_non_pruned_params()/1e6,))
         print("FINISHED PRUNING")
-        #print("number of parameters: %.2fM" % (self.get_num_non_pruned_params()/1e6,))
+        
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
