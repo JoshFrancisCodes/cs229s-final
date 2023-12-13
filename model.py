@@ -32,9 +32,9 @@ class CausalSelfAttention(nn.Module):
         super().__init__()
         assert config.n_embd % config.n_head == 0
         # key, query, value projections for all heads, but in a batch
-        self.c_attn = nn.Linear(config.n_embd, 3 * config.n_embd, bias=config.bias)
+        self.c_attn = PrunableLinear(config.n_embd, 3 * config.n_embd, bias=config.bias)
         # output projection
-        self.c_proj = nn.Linear(config.n_embd, config.n_embd, bias=config.bias)
+        self.c_proj = PrunableLinear(config.n_embd, config.n_embd, bias=config.bias)
         # regularization
         self.attn_dropout = nn.Dropout(config.dropout)
         self.resid_dropout = nn.Dropout(config.dropout)
@@ -76,27 +76,21 @@ class CausalSelfAttention(nn.Module):
         return y
     
     def prune(self, p):
-        return
         self.c_attn.prune_weights(p)
         self.c_proj.prune_weights(p)
-        self.n_embd = int(self.n_embd * (1 - p))
+        #self.n_embd = int(self.n_embd * (1 - p))
 
-class PrunableLinear(nn.Linear):
+class L2Pruning(nn.Linear):
     def __init__(self, *args, **kwargs):
-        super(PrunableLinear, self).__init__(*args, **kwargs)
+        super(L2Pruning, self).__init__(*args, **kwargs)
 
     def prune_weights(self, p):
         with torch.no_grad():
             # Compute L2 norm for each row
             norms = torch.norm(self.weight, p=2, dim=1)
 
-            total_dims = self.weight.size(0)  # Number of rows (output dimensions)
-            # If you want to prune columns instead, use self.weight.size(1)
-
-            # Calculate the number of dimensions to prune
+            total_dims = self.weight.size(0) 
             n_dims_to_keep = int(total_dims * (1 - p))
-            n_dims_to_prune = int(total_dims * p)
-            #print(total_dims, n_dims_to_keep)
 
             # Find the indices of the rows with the lowest L2 norms
             _, indices_to_keep = torch.topk(norms, n_dims_to_keep, largest=True)
@@ -107,14 +101,10 @@ class PrunableLinear(nn.Linear):
             # Convert indices_to_keep to a boolean mask
             keep_mask = torch.zeros_like(all_indices, dtype=torch.bool)
             keep_mask[indices_to_keep] = True
-
-            # Find the indices to prune (those not in indices_to_keep)
             indices_to_prune = all_indices[~keep_mask]
 
-            # Prune the rows from the weight matrix
             self.weight = nn.Parameter(torch.index_select(self.weight, 0, indices_to_keep))
 
-            # Adjust bias if necessary
             if self.bias is not None:
                 self.bias = nn.Parameter(torch.index_select(self.bias, 0, indices_to_keep))
 
@@ -124,22 +114,18 @@ class PrunableLinear(nn.Linear):
         with torch.no_grad():
             all_indices = torch.arange(self.weight.size(1), device=self.weight.device)
             indices_to_keep = torch.tensor([i for i in all_indices if i not in indices_to_remove], device=self.weight.device)
-
-            # Prune columns
-            print(indices_to_keep.shape)
             self.weight = nn.Parameter(torch.index_select(self.weight, 1, indices_to_keep))
     
-class PrunableLinear2(nn.Linear):
+# Magnitude based pruning with masks
+class PrunableLinear(nn.Linear):
     def __init__(self, *args, **kwargs):
-        super(PrunableLinear2, self).__init__(*args, **kwargs)
+        super(PrunableLinear, self).__init__(*args, **kwargs)
         # Initalize prune mask to all 1s, will be updated as we call prune_weights
         self.mask = torch.ones(self.weight.shape, device='cuda')
 
     def prune_weights(self, p):
         with torch.no_grad():
             # Flatten the weights and compute the threshold for pruning
-            # Mask all values that we've set to 0 in the past; They may have been updated
-            # when we called train
             self.weight.data *= self.mask
             flat_weights = self.weight.abs().flatten()
             non_zero_indices = torch.nonzero(flat_weights)
@@ -155,40 +141,6 @@ class PrunableLinear2(nn.Linear):
 
             print(f"Pruned {flat_weights.numel() - torch.count_nonzero(weight_mask.flatten())}")
             print(f"Weights are {self.weight}\n Weight data is {self.weight.data}")
-            # Optionally, apply the same pruning to the bias
-            # if self.bias is not None:
-            #     flat_biases = self.bias.abs().flatten()
-            #     bias_threshold = torch.quantile(flat_biases, p / 100.0)
-            #     bias_mask = torch.abs(self.bias) > bias_threshold
-            #     self.bias.data *= bias_mask
-            
-class PrunableLinear3(nn.Linear):
-    def __init__(self, *args, **kwargs):
-        super(PrunableLinear3, self).__init__(*args, **kwargs)
-        # Initialize prune mask to all 1s (no pruning)
-        self.mask = torch.ones(self.weight.shape[0], device='cuda')  # Mask for rows
-
-    def prune_dimensions(self, p):
-        with torch.no_grad():
-            # Calculate the L2 norm of each row
-            norms = torch.norm(self.weight, p=2, dim=1)
-
-            # Determine the number of rows to prune
-            num_rows_to_prune = int(p * self.weight.shape[0])
-
-            # Find the rows with the smallest norms
-            _, indices_to_prune = torch.topk(norms, num_rows_to_prune, largest=False)
-
-            # Update the mask
-            self.mask[indices_to_prune] = 0
-
-            # Apply the mask to the weights
-            self.weight.data = self.weight.data * self.mask[:, None]
-
-    def forward(self, input):
-        # Apply mask to weights during forward pass
-        pruned_weight = self.weight * self.mask[:, None]
-        return nn.functional.linear(input, pruned_weight, self.bias)
 
 class MLP(nn.Module):
 
@@ -200,7 +152,6 @@ class MLP(nn.Module):
         self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
-        #print("Starting forward pass: ")
         x = self.c_fc(x)
         x = self.gelu(x)
         x = self.c_proj(x)
@@ -208,9 +159,8 @@ class MLP(nn.Module):
         return x
     
     def prune(self, p):
-        removed_row_indices = self.c_fc.prune_weights(p)
-        #self.c_proj.prune_weights(p)
-        self.c_proj.prune_columns(removed_row_indices)
+        self.c_fc.prune_weights(p)
+        self.c_proj.prune_weights(p)
 
 class Block(nn.Module):
 
@@ -255,7 +205,7 @@ class GPT(nn.Module):
             h = nn.ModuleList([Block(config) for _ in range(config.n_layer)]),
             ln_f = LayerNorm(config.n_embd, bias=config.bias),
         ))
-        self.lm_head = nn.Linear(config.n_embd, config.vocab_size, bias=False)
+        self.lm_head = PrunableLinear(config.n_embd, config.vocab_size, bias=False)
         # with weight tying when using torch.compile() some warnings get generated:
         # "UserWarning: functional_call was passed multiple values for tied weights.
         # This behavior is deprecated and will be an error in future versions"
@@ -298,11 +248,11 @@ class GPT(nn.Module):
 
     
     def prune(self, p):
-        #self.lm_head.prune_weights(p)
+        self.lm_head.prune_weights(p)
         for block in self.transformer.h:
             block.prune(p)
         print("FINISHED PRUNING")
-        #print("number of parameters: %.2fM" % (self.get_num_non_pruned_params()/1e6,))
+        print("number of parameters: %.2fK" % (self.get_num_non_pruned_params()/1e3,))
 
     def _init_weights(self, module):
         if isinstance(module, nn.Linear):
